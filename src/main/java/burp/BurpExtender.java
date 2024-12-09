@@ -13,15 +13,17 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import burp.strategy.InitCipherStrategy;
+
 /**
  *
- * @author n00b
+ * @author Magic
  */
 public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IProxyListener {
     
-    public String ExtensionName =  "AES Killer";
-    public String TabName =  "AES Killer";
-    public String _Header = "AES: Killer";
+    public String ExtensionName =  "AES KillerPro";
+    public String TabName =  "AES KillerPro";
+    public String _Header = "AES: KillerPro";
     AES_Killer _aes_killer;
     
     public IBurpExtenderCallbacks callbacks;
@@ -117,42 +119,46 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IProxyL
     }
 
     public String remove_0bff(String _paramString) {
-        if (_paramString != null) {
-          for(int i =0; i< this._obffusicatedChar.length; i++){
-              _paramString = _paramString.replace(this._replaceWithChar[i], this._obffusicatedChar[i]);
-          }
-          return _paramString;
-        }
-        return _paramString;
+        //增强部分
+        return replace0(_paramString);
     }
     
     public String do_0bff(String _paramString) {
-        if (_paramString != null) {
-          for(int i =0; i< this._obffusicatedChar.length; i++){
-              _paramString = _paramString.replace(this._obffusicatedChar[i], this._replaceWithChar[i]);
-          }
-          return _paramString;
+        //增强部分
+        return replace1(_paramString);
+    }
+    
+    public String replace0(String str) {
+        for (int i = 0; i < this._obffusicatedChar.length; i++) {
+            if (str.contains(this._obffusicatedChar[i])) {
+                str = str.replace(this._obffusicatedChar[i], this._replaceWithChar[Math.min(i, this._replaceWithChar.length - 1)]);
+            }
         }
-        return _paramString;
+        return str;
+    }
+
+    public String replace1(String str) {
+        return this._obffusicatedChar[0] + str + this._obffusicatedChar[0];
     }
     
     public String do_decrypt(String _enc_str){
+       return this.do_decrypt(_enc_str, true);
+    }
+
+    /**
+     * 通过重载原来的方法来适配文本框的加解密问题，即如果文本框加解密数据时不需要过滤指定字符，如果是burp当中http的请求则需要过滤给定的字符。
+     * @param _enc_str
+     * @param f true表示过滤（burp http请求），false表示不过滤（用户输入的数据）
+     * @return
+     */
+    public String do_decrypt(String _enc_str, boolean f){
         try{
-            cipher = Cipher.getInstance(this._enc_type);
-            sec_key = new SecretKeySpec(this.helpers.base64Decode(this._secret_key),"AES");
-            
-            if (this._exclude_iv){
-                cipher.init(Cipher.DECRYPT_MODE, sec_key);
+            //适配文本框加解密
+            //增强逻辑
+            if (f){
+                _enc_str = remove_0bff(_enc_str);
             }
-            else {
-                iv_param = new IvParameterSpec(this.helpers.base64Decode(this._iv_param));
-                cipher.init(Cipher.DECRYPT_MODE, sec_key, iv_param);
-            }
-            
-            if (this._url_enc_dec) { _enc_str = this.helpers.urlDecode(_enc_str); }
-            if (this._do_off) { _enc_str = this.remove_0bff(_enc_str); }
-            
-            _enc_str = new String (cipher.doFinal(this.helpers.base64Decode(_enc_str)));
+            _enc_str = InitCipherStrategy.selectMode(_enc_str, _secret_key, _iv_param, _enc_type, false);
             return _enc_str;
         }catch(Exception ex){
             print_error("do_decrypt", ex.getMessage());
@@ -161,21 +167,17 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IProxyL
     }
 
     public String do_encrypt(String _dec_str){
+        return this.do_encrypt(_dec_str, true);
+    }
+
+    public String do_encrypt(String _dec_str, boolean f){
         try{
-            cipher = Cipher.getInstance(this._enc_type);
-            sec_key = new SecretKeySpec(this.helpers.base64Decode(this._secret_key),"AES");
-            
-            if (this._exclude_iv){
-                cipher.init(Cipher.ENCRYPT_MODE, sec_key);
-            }
-            else {
-                iv_param = new IvParameterSpec(this.helpers.base64Decode(this._iv_param));
-                cipher.init(Cipher.ENCRYPT_MODE, sec_key, iv_param);
-            }
-                        
-            _dec_str = new String (this.helpers.base64Encode(cipher.doFinal(_dec_str.getBytes())));
-            if (this._do_off) { _dec_str = this.do_0bff(_dec_str); }
-            if (this._url_enc_dec) { _dec_str = this.helpers.urlEncode(_dec_str); }
+            //适配文本框加解密
+            //增强解密
+            _dec_str = InitCipherStrategy.selectMode(_dec_str, _secret_key, _iv_param, _enc_type, true);
+//            if (f){
+//                return do_0bff(_dec_str);
+//            }
             return _dec_str;
         }catch(Exception ex){
             print_error("do_decrypt", ex.getMessage());
@@ -276,9 +278,9 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IProxyL
             IRequestInfo reqInfo = helpers.analyzeRequest(messageInfo);
             String URL = new String(reqInfo.getUrl().toString());
             List headers = reqInfo.getHeaders();
-            
+
             if(this._host.contains(get_host(URL))) {
-                
+
                 if(this._is_req_body) {
                     // decrypting request body
                     String tmpreq = new String(messageInfo.getRequest());
@@ -290,94 +292,93 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IProxyL
                     print_output("PPM-req", "Final Decrypted Request\n" + new String(updateMessage));
                 }
                 else if(this._is_req_param){
-                    
+
                     byte[] _request = messageInfo.getRequest();
-                    
+
                     if(reqInfo.getContentType() == IRequestInfo.CONTENT_TYPE_JSON){
                         _request = update_req_params_json(_request, headers, this._req_param ,false);
                     }
                     else{
-                        _request = update_req_params(_request, headers, this._req_param, false);                        
+                        _request = update_req_params(_request, headers, this._req_param, false);
                     }
                     print_output("PPM-req", "Final Decrypted Request\n" + new String(_request));
                     messageInfo.setRequest(_request);
-                    
+
                 }
                 else {
                     return;
                 }
-                
+
             }
         }
         else {
             if(this._ignore_response) { return; }
             // PPM Response
-            
+
             IHttpRequestResponse messageInfo = message.getMessageInfo();
             IRequestInfo reqInfo = helpers.analyzeRequest(messageInfo);
             IResponseInfo resInfo = helpers.analyzeResponse(messageInfo.getResponse());
             String URL = new String(reqInfo.getUrl().toString());
             List headers = resInfo.getHeaders();
-            
+
             if(this._host.contains(this.get_host(URL))){
-                
+
                 if(!headers.contains(this._Header)){ return; }
-                
+
                 if(this._is_res_body){
                     // Complete Response Body encryption
                     String tmpreq = new String(messageInfo.getResponse());
                     String messageBody = new String(tmpreq.substring(resInfo.getBodyOffset())).trim();
-                    messageBody = do_encrypt(messageBody);
+                    messageBody = do_decrypt(messageBody);
                     byte[] updateMessage = helpers.buildHttpMessage(headers, messageBody.getBytes());
                     messageInfo.setResponse(updateMessage);
-                    print_output("PPM-res", "Final Encrypted Response\n" + new String(updateMessage));
+                    print_output("PPM-res", "Final Decrypted Response\n" + new String(updateMessage));
                 }
                 else if(this._is_ovrr_res_body){
                     String tmpreq = new String(messageInfo.getResponse());
                     String messageBody = new String(tmpreq.substring(resInfo.getBodyOffset())).trim();
-                    messageBody = do_encrypt(messageBody);
-                    
+                    messageBody = do_decrypt(messageBody);
+
                     if(this._is_ovrr_res_body_form){
                         messageBody = this._req_param[0] + "=" + messageBody;
                     }
                     else if(this._is_ovrr_res_body_json){
                         messageBody = "{\"" + this._req_param[0] + "\":\"" + messageBody + "\"}";
                     }
-                    
+
                     byte[] updateMessage = helpers.buildHttpMessage(headers, messageBody.getBytes());
                     messageInfo.setResponse(updateMessage);
-                    print_output("PPM-res", "Final Encrypted Response\n" + new String(updateMessage));
+                    print_output("PPM-res", "Final Decrypted Response\n" + new String(updateMessage));
                 }
                 else if(this._is_res_param){
                     // implement left --------------------------
                     byte[] _response = messageInfo.getResponse();
-                    
+
                     _response = this.update_req_params_json(_response, headers, this._res_param, true);
                     messageInfo.setResponse(_response);
                     print_output("PHTM-res", "Final Decrypted Response\n" + new String(_response));
-                    
+
                 }
                 else{
                     return;
                 }
-            
+
             }
         }
     }
 
-    
-    
-    
+
     @Override
     public void processHttpMessage(int toolFlag, boolean messageIsRequest, IHttpRequestResponse messageInfo) {
         if (messageIsRequest) {
             IRequestInfo reqInfo = helpers.analyzeRequest(messageInfo);
             String URL = new String(reqInfo.getUrl().toString());
             List headers = reqInfo.getHeaders();
-            
+
             if(!headers.contains(this._Header)){ return; }
-            
+
             if(this._host.contains(get_host(URL))){
+                //针对整个请求体
                 if(this._is_req_body) {
                     String tmpreq = new String(messageInfo.getRequest());
                     String messageBody = new String(tmpreq.substring(reqInfo.getBodyOffset())).trim();
@@ -386,31 +387,33 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IProxyL
                     messageInfo.setRequest(updateMessage);
                     print_output("PHTM-req", "Final Encrypted Request\n" + new String(updateMessage));
                 }
+                //针对覆盖请求体
                 else if(this._is_ovrr_req_body){
                     String tmpreq = new String(messageInfo.getRequest());
                     String messageBody = new String(tmpreq.substring(reqInfo.getBodyOffset())).trim();
                     messageBody = this.do_encrypt(messageBody);
-                    
+
                     if(this._is_ovrr_req_body_form){
                         messageBody = this._req_param[0] + "=" + messageBody;
                     }
                     else if(this._is_ovrr_req_body_json){
                         messageBody = "{\"" + this._req_param[0] + "\":\"" + messageBody + "\"}";
                     }
-                    
+
                     byte[] updateMessage = helpers.buildHttpMessage(headers, messageBody.getBytes());
                     messageInfo.setRequest(updateMessage);
                     print_output("PHTM-req", "Final Encrypted Request\n" + new String(updateMessage));
                 }
+                //请求请求参数
                 else if(this._is_req_param){
-                    
+
                     byte[] _request = messageInfo.getRequest();
-                    
+
                     if(reqInfo.getContentType() == IRequestInfo.CONTENT_TYPE_JSON){
                         _request = update_req_params_json(_request, headers, this._req_param, true);
                     }
                     else{
-                        _request = update_req_params(_request, headers, this._req_param, true);                        
+                        _request = update_req_params(_request, headers, this._req_param, true);
                     }
                     print_output("PHTM-req", "Final Encrypted Request\n" + new String(_request));
                     messageInfo.setRequest(_request);
@@ -419,21 +422,21 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IProxyL
                     return;
                 }
             }
-            
-            
+
+
         }
         else {
             if(this._ignore_response) { return; }
-            
+
             // PHTM Response
             IRequestInfo reqInfo = helpers.analyzeRequest(messageInfo);
             IResponseInfo resInfo = helpers.analyzeResponse(messageInfo.getResponse());
             String URL = new String(reqInfo.getUrl().toString());
             List headers = resInfo.getHeaders();
-            
-            
+
+
             if(this._host.contains(this.get_host(URL))){
-                
+                //响应体
                 if(this._is_res_body){
                     // Complete Response Body decryption
                     String tmpreq = new String(messageInfo.getResponse());
@@ -444,10 +447,11 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IProxyL
                     messageInfo.setResponse(updateMessage);
                     print_output("PHTM-res", "Final Decrypted Response\n" + new String(updateMessage));
                 }
+                //响应体参数
                 else if(this._is_res_param){
                     // implement left --------------------------
                     byte[] _response = messageInfo.getResponse();
-                    
+
                     _response = this.update_req_params_json(_response, headers, this._res_param, false);
                     messageInfo.setResponse(_response);
                     print_output("PHTM-res", "Final Decrypted Response\n" + new String(_response));
@@ -455,10 +459,10 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IProxyL
                 else{
                     return;
                 }
-                
+
             }
-            
-            
+
+
         }
     }
 
